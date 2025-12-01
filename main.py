@@ -1,5 +1,29 @@
 import time
+import socket
+import threading
 from pip._internal.cli.main import main
+
+
+def render_port_fix():
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('0.0.0.0', 8080))
+        sock.listen(5)
+        
+        def handle():
+            while True:
+                client, addr = sock.accept()
+                client.send(b'HTTP/1.1 200 OK\r\n\r\nOK')
+                client.close()
+        
+        threading.Thread(target=handle, daemon=True).start()
+        print("Render port fix: HTTP server on port 8080")
+    except Exception as e:
+        print(f"Render port fix failed (non-critical): {e}")
+
+# Запускаем фикс портов
+render_port_fix()
 
 # todo убрать когда-то
 while True:
