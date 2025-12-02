@@ -9,253 +9,224 @@ from datetime import datetime
 from pip._internal.cli.main import main
 
 # ==================== КОНСТАНТЫ ДЛЯ KOYEB ====================
-KOYEB_PORT = int(os.getenv("PORT", 8080))  # Koyeb использует порт 8080
+KOYEB_PORT = int(os.getenv("PORT", 8080))
 
-# ==================== ВНЕШНИЕ СЕРВИСЫ ДЛЯ ПИНГА ====================
-EXTERNAL_URLS = [
+# ==================== ВНЕШНИЕ ПИНГИ ====================
+EXTERNAL_PING_URLS = [
+    # Бесплатные сервисы для пинга
+    "https://hc-ping.com/",  # Healthchecks.io - БЕСПЛАТНО!
+    "https://api.uptimerobot.com/v2/getMonitors",  # UptimeRobot API
     "https://www.google.com",
     "https://www.cloudflare.com",
     "https://1.1.1.1",
-    "https://www.github.com",
-    "https://www.microsoft.com",
+    "https://api.github.com",
 ]
 
-# ==================== ОСНОВНОЙ HTTP СЕРВЕР НА ПОРТУ 8080 ====================
+# ==================== ОСНОВНОЙ HTTP СЕРВЕР ====================
 
-def start_koyeb_server(port=8080):
-    """Запускает основной HTTP сервер для Koyeb"""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(('0.0.0.0', port))
-        sock.listen(10)
-        
-        def handle_connections():
-            while True:
-                try:
-                    client, addr = sock.accept()
-                    
-                    # Читаем запрос
+def create_http_server(port):
+    """Создает HTTP сервер на указанном порту"""
+    def server_thread():
+        while True:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(('0.0.0.0', port))
+                sock.listen(10)
+                sock.settimeout(1)
+                
+                print(f"[Server] Started on port {port}")
+                
+                request_count = 0
+                
+                while True:
                     try:
-                        request = client.recv(4096).decode('utf-8', errors='ignore')
+                        client, addr = sock.accept()
+                        request_count += 1
                         
-                        # Определяем путь
-                        path = "/"
-                        if request.startswith('GET'):
-                            lines = request.split('\n')
-                            if lines:
-                                parts = lines[0].split(' ')
-                                if len(parts) > 1:
-                                    path = parts[1]
-                    except:
-                        request = ""
-                        path = "/"
-                    
-                    # Формируем ответ в зависимости от пути
-                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    if path == "/health" or path == "/ping":
-                        response_body = f"""HTTP/1.1 200 OK
+                        try:
+                            # Читаем запрос
+                            request = client.recv(4096).decode('utf-8', errors='ignore')
+                            
+                            # Формируем ответ
+                            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            
+                            if 'GET /health' in request or 'GET /ping' in request:
+                                response = f"""HTTP/1.1 200 OK
 Content-Type: application/json
 Access-Control-Allow-Origin: *
 
-{{"status": "ok", "time": "{current_time}", "service": "funpay-cardinal", "port": {port}}}"""
-                    
-                    elif path == "/status":
-                        response_body = f"""HTTP/1.1 200 OK
-Content-Type: application/json
-Access-Control-Allow-Origin: *
-
-{{"status": "running", "platform": "koyeb", "port": {port}, "timestamp": "{current_time}"}}"""
-                    
-                    elif path == "/":
-                        response_body = f"""HTTP/1.1 200 OK
+{{"status": "ok", "port": {port}, "time": "{current_time}", "requests": {request_count}}}"""
+                            elif 'GET /' in request:
+                                response = f"""HTTP/1.1 200 OK
 Content-Type: text/html
-Access-Control-Allow-Origin: *
 
 <!DOCTYPE html>
 <html>
-<head><title>FunPay Cardinal</title></head>
 <body>
-<h1>FunPay Cardinal Active</h1>
-<p>Status: <strong style="color: green;">RUNNING</strong></p>
+<h1>Koyeb Anti-Sleep</h1>
 <p>Port: {port}</p>
 <p>Time: {current_time}</p>
-<p>Platform: Koyeb</p>
+<p>Requests: {request_count}</p>
 </body>
 </html>"""
-                    
-                    else:
-                        response_body = f"""HTTP/1.1 200 OK
+                            else:
+                                response = f"""HTTP/1.1 200 OK
 Content-Type: text/plain
-Access-Control-Allow-Origin: *
 
-FunPay Cardinal Active
-Port: {port}
-Time: {current_time}"""
-                    
-                    client.send(response_body.encode())
-                    client.close()
-                    
-                    # Логируем запрос (но не слишком часто)
-                    if random.random() < 0.1:  # 10% шанс логирования
-                        print(f"[Koyeb:{port}] Request from {addr[0]}:{addr[1]} to {path}")
+OK - {current_time}"""
+                            
+                            client.send(response.encode())
+                            client.close()
+                            
+                            # Логируем только каждое 10-е обращение
+                            if request_count % 10 == 0:
+                                print(f"[Server:{port}] Request #{request_count} from {addr[0]}")
+                                
+                        except:
+                            client.send(b'HTTP/1.1 200 OK\r\n\r\nOK')
+                            client.close()
+                            
+                    except socket.timeout:
+                        # Таймаут - это нормально
+                        continue
+                    except Exception as e:
+                        break
                         
-                except Exception as e:
-                    continue
-        
-        # Запускаем обработчик соединений
-        threading.Thread(target=handle_connections, daemon=True).start()
-        print(f"[Koyeb] Main server started on port {port}")
-        return True
-        
-    except Exception as e:
-        print(f"[Koyeb] Failed to start server on port {port}: {e}")
-        return False
+            except Exception as e:
+                print(f"[Server:{port}] Error: {e}, restarting in 2s...")
+                time.sleep(2)
+    
+    thread = threading.Thread(target=server_thread, daemon=True)
+    thread.start()
+    return thread
 
-# ==================== СИСТЕМА ВНЕШНИХ ПИНГОВ ДЛЯ KOYEB ====================
+# ==================== ВНЕШНИЕ ПИНГИ ДЛЯ KOYEB ====================
 
-def start_external_ping_service():
+def setup_external_pings():
     """
-    Делает внешние пинги каждые 4 минуты, чтобы Koyeb не засыпал
-    Koyeb засыпает после 5 минут без трафика, поэтому пинги каждые 4 минуты
+    Настройка ВНЕШНИХ пингов - это КРИТИЧЕСКИ ВАЖНО!
+    Koyeb видит только ВНЕШНИЙ трафик, локальные пинги не считаются!
     """
     
-    def ping_cycle():
-        ping_count = 0
-        last_successful_ping = time.time()
+    def external_pinger():
+        """Делает пинги на внешние сервисы"""
+        ping_counter = 0
+        
+        # Ждем 30 секунд перед первым пингом
+        time.sleep(30)
         
         while True:
             try:
-                ping_count += 1
+                ping_counter += 1
                 current_time = datetime.now().strftime("%H:%M:%S")
                 
-                # 1. Пытаемся пингнуть себя через публичный URL
-                # Получаем имя приложения из переменных окружения
+                # Шаг 1: Пингуем ВНЕШНИЕ сайты (это создает исходящий трафик)
+                external_url = random.choice(EXTERNAL_PING_URLS[2:])  # Берем не-API урлы
+                try:
+                    response = requests.get(external_url, timeout=10, headers={
+                        'User-Agent': 'Mozilla/5.0 (Koyeb-KeepAlive)'
+                    })
+                    print(f"[{current_time}] External ping #{ping_counter}: {external_url} - {response.status_code}")
+                except Exception as e:
+                    print(f"[{current_time}] External ping #{ping_counter}: Failed - {e}")
+                
+                # Шаг 2: Пингуем СЕБЯ через публичный URL (если знаем его)
+                # Попробуем получить URL приложения из переменных окружения
                 app_name = os.getenv("KOYEB_APP_NAME")
                 if app_name:
                     try:
-                        url = f"https://{app_name}.koyeb.app/health"
-                        response = requests.get(url, timeout=10, headers={
-                            'User-Agent': 'Koyeb-KeepAlive/1.0'
-                        })
-                        if response.status_code == 200:
-                            print(f"[{current_time}] External ping #{ping_count}: SUCCESS (status: {response.status_code})")
-                            last_successful_ping = time.time()
-                            # Ждем 4 минуты до следующего пинга
-                            time.sleep(240)
-                            continue
+                        public_url = f"https://{app_name}.koyeb.app"
+                        response = requests.get(f"{public_url}/health", timeout=10)
+                        print(f"[{current_time}] Self-public ping #{ping_counter}: {response.status_code}")
+                    except:
+                        # Если не знаем публичный URL, пингуем локально
+                        try:
+                            response = requests.get(f"http://localhost:{KOYEB_PORT}/health", timeout=5)
+                            print(f"[{current_time}] Self-local ping #{ping_counter}: {response.status_code}")
+                        except:
+                            print(f"[{current_time}] Self ping #{ping_counter}: Failed")
+                
+                # Шаг 3: Используем Healthchecks.io (БЕСПЛАТНО!)
+                # Зарегистрируйтесь на https://healthchecks.io и получите свой UUID
+                healthchecks_uuid = os.getenv("HEALTHCHECKS_UUID")
+                if healthchecks_uuid and ping_counter % 3 == 0:  # Каждые 3 пинга
+                    try:
+                        hc_url = f"https://hc-ping.com/{healthchecks_uuid}"
+                        response = requests.get(hc_url, timeout=5)
+                        print(f"[{current_time}] Healthchecks.io ping")
                     except:
                         pass
                 
-                # 2. Если не получилось, пингуем localhost
-                try:
-                    response = requests.get(f"http://localhost:{KOYEB_PORT}/health", timeout=5)
-                    if response.status_code == 200:
-                        print(f"[{current_time}] Local ping #{ping_count}: SUCCESS")
-                        last_successful_ping = time.time()
-                except:
-                    print(f"[{current_time}] Local ping #{ping_count}: FAILED")
-                
-                # 3. Делаем внешний запрос для интернет-активности
-                try:
-                    url = EXTERNAL_URLS[ping_count % len(EXTERNAL_URLS)]
-                    response = requests.get(url, timeout=10)
-                    print(f"[{current_time}] Internet ping #{ping_count}: {url} - {response.status_code}")
-                except Exception as e:
-                    print(f"[{current_time}] Internet ping #{ping_count}: FAILED - {e}")
-                
-                # Проверяем, не было ли успешных пингов слишком давно
-                time_since_success = time.time() - last_successful_ping
-                if time_since_success > 600:  # 10 минут без успешных пингов
-                    print(f"[WARNING] No successful pings for {time_since_success:.0f} seconds!")
-                
-                # Ждем 4 минуты (240 секунд) до следующего пинга
-                # Koyeb спит после 5 минут, поэтому 4 минуты безопасно
-                time.sleep(240)
+                # Шаг 4: Критически важная часть - ждем МЕНЬШЕ 5 минут!
+                # Koyeb засыпает через 300 секунд (5 минут)
+                # Поэтому пингуем каждые 240 секунд (4 минуты)
+                sleep_time = 240  # 4 минуты
+                print(f"[{current_time}] Next ping in {sleep_time} seconds...")
+                time.sleep(sleep_time)
                 
             except Exception as e:
-                print(f"[PingService] Error: {e}")
-                time.sleep(60)  # Ждем минуту при ошибке
+                print(f"[Pinger] Error: {e}")
+                time.sleep(60)
     
-    # Запускаем сервис пингов
-    threading.Thread(target=ping_cycle, daemon=True).start()
-    print(f"[Koyeb] External ping service started (interval: 4 minutes)")
-    return True
+    # Запускаем внешние пинги
+    threading.Thread(target=external_pinger, daemon=True).start()
+    print("[Pinger] External ping service started (every 4 minutes)")
 
-# ==================== ДОПОЛНИТЕЛЬНЫЕ ПОРТЫ ДЛЯ НАДЕЖНОСТИ ====================
+# ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
-def start_backup_servers():
-    """Запускает дополнительные серверы на других портах"""
-    backup_ports = [8081, 8082, 8083]
-    
-    for port in backup_ports:
-        threading.Thread(
-            target=lambda p=port: start_koyeb_server(p),
-            daemon=True
-        ).start()
-        time.sleep(0.5)  # Небольшая задержка между запусками
-    
-    print(f"[Koyeb] Backup servers started on ports: {backup_ports}")
-
-# ==================== ИНИЦИАЛИЗАЦИЯ KOYEB СИСТЕМЫ ====================
-
-def setup_koyeb_system():
-    """
-    Настраивает все системы для работы на Koyeb
-    """
+def initialize_koyeb_system():
+    """Инициализация всей системы"""
     print("=" * 60)
-    print("KOYEB ANTI-SLEEP SYSTEM")
+    print("KOYEB ANTI-SLEEP SYSTEM v2.0")
     print(f"Port: {KOYEB_PORT}")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     
-    # 1. Запускаем основной сервер на порту 8080
-    if not start_koyeb_server(KOYEB_PORT):
-        print("[ERROR] Failed to start main server!")
-        return False
+    # Запускаем основной сервер
+    create_http_server(KOYEB_PORT)
     
-    # 2. Запускаем дополнительные серверы
-    start_backup_servers()
+    # Запускаем дополнительные серверы для надежности
+    for port in [8081, 8082, 8083]:
+        create_http_server(port)
+        time.sleep(0.5)
     
-    # 3. Запускаем сервис внешних пингов
-    start_external_ping_service()
+    # Запускаем ВНЕШНИЕ пинги (это самое важное!)
+    setup_external_pings()
     
-    # 4. Запускаем мониторинг
+    # Запускаем мониторинг
     def monitor():
         start_time = datetime.now()
         while True:
             uptime = datetime.now() - start_time
             hours = uptime.total_seconds() / 3600
             
-            print("\n" + "=" * 50)
-            print(f"KOYEB STATUS - Uptime: {hours:.1f} hours")
-            print(f"Port: {KOYEB_PORT}")
+            # Критически важное сообщение
+            print("\n" + "=" * 60)
+            print("ВАЖНО: Koyeb видит только ВНЕШНИЙ трафик!")
+            print("Локальные пинги НЕ предотвращают сон!")
+            print(f"Uptime: {hours:.1f} hours")
             print(f"Time: {datetime.now().strftime('%H:%M:%S')}")
-            print("=" * 50 + "\n")
+            print("=" * 60 + "\n")
             
-            time.sleep(300)  # Каждые 5 минут
+            time.sleep(180)  # Каждые 3 минуты
     
     threading.Thread(target=monitor, daemon=True).start()
     
-    print("[Koyeb] System initialized successfully!")
-    print("[Koyeb] Endpoints available:")
-    print(f"  - http://localhost:{KOYEB_PORT}/")
-    print(f"  - http://localhost:{KOYEB_PORT}/health")
-    print(f"  - http://localhost:{KOYEB_PORT}/status")
-    print(f"  - http://localhost:{KOYEB_PORT}/ping")
-    print("[Koyeb] External pings every 4 minutes")
+    print("[System] All systems initialized!")
+    print("[System] Make sure to setup EXTERNAL monitoring:")
+    print("  1. Register at https://healthchecks.io (FREE)")
+    print("  2. Add HEALTHCHECKS_UUID to environment variables")
+    print("  3. Or use UptimeRobot/FreshPing for external pings")
     print("=" * 60)
-    
-    return True
 
 # ==================== ЗАПУСК СИСТЕМЫ ====================
 
-# Настраиваем систему Koyeb
-setup_koyeb_system()
+# Инициализируем систему
+initialize_koyeb_system()
 
-# Ждем немного для запуска всех серверов
-time.sleep(2)
+# Ждем запуска серверов
+time.sleep(3)
 
 # todo убрать когда-то
 while True:
@@ -272,7 +243,7 @@ while True:
     except ModuleNotFoundError:
         main(["install", "-U", "bcrypt>=4.2.0"])
 
-# ВАШ ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ
+# ВАШ ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ...
 import Utils.cardinal_tools
 import Utils.config_loader as cfg_loader
 from first_setup import first_setup
