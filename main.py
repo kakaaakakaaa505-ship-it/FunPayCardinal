@@ -13,7 +13,7 @@ from pip._internal.cli.main import main
 KOYEB_PORT = int(os.getenv("PORT", 8080))
 GOTTY_PORT = 8086
 RESTART_HOURS = 2
-RESTART_SECONDS = RESTART_HOURS * 3600
+RESTART_SECONDS = 600
 
 # ==================== ПРОСТОЙ GOTTY ====================
 
