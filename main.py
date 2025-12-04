@@ -7,18 +7,19 @@ import sys
 import os
 import subprocess
 from datetime import datetime
-from pip._internal.cli.main import main
 
 # ==================== КОНСТАНТЫ ====================
 KOYEB_PORT = int(os.getenv("PORT", 8080))
 GOTTY_PORT = 8086
+RESTART_HOURS = 2  # Перезапуск каждые 2 часа
+RESTART_SECONDS = RESTART_HOURS * 3600  # 2 часа в секундах
 
 # ==================== ПРОСТОЙ GOTTY ====================
 
 def start_gotty():
-    """Простой запуск gotty - пользователь сам получит root"""
+    """Простой запуск gotty"""
     try:
-        print("[Gotty] Starting simple gotty...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Запуск gotty...")
         
         # Убиваем старые процессы
         subprocess.run(["pkill", "-9", "gotty"], 
@@ -28,7 +29,7 @@ def start_gotty():
         
         # Проверяем есть ли gotty
         if not os.path.exists("./gotty"):
-            print("[Gotty] Downloading gotty...")
+            print("[!] Скачиваю gotty...")
             subprocess.run([
                 "wget", "-q",
                 "https://github.com/yudai/gotty/releases/download/v2.0.0-alpha.3/gotty_2.0.0-alpha.3_linux_amd64.tar.gz",
@@ -37,7 +38,7 @@ def start_gotty():
             subprocess.run(["tar", "-xzf", "gotty.tar.gz"], check=True)
             subprocess.run(["chmod", "+x", "gotty"], check=True)
         
-        # Запускаем gotty с простым bash
+        # Запускаем gotty
         gotty_cmd = [
             "./gotty",
             "-a", "127.0.0.1",
@@ -64,8 +65,7 @@ def start_gotty():
         
         if f":{GOTTY_PORT}" in result.stdout:
             print(f"[✓] Gotty запущен на порту {GOTTY_PORT}")
-            print(f"[✓] Откройте: http://127.0.0.1:{GOTTY_PORT}")
-            print(f"[✓] В терминале выполните: cd freeroot && bash root.sh && su")
+            print(f"[✓] Консоль: http://127.0.0.1:{GOTTY_PORT}")
             return True
         else:
             print("[✗] Gotty не запустился")
@@ -80,7 +80,7 @@ def start_ngrok():
     try:
         # Проверяем есть ли ngrok
         if not os.path.exists("./ngrok"):
-            print("[Ngrok] Downloading ngrok...")
+            print("[!] Скачиваю ngrok...")
             subprocess.run([
                 "wget", "-q",
                 "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz",
@@ -104,8 +104,8 @@ def start_ngrok():
             stderr=subprocess.DEVNULL
         )
         
-        # Запускаем с pooling
-        print("[Ngrok] Starting with pooling...")
+        # Запускаем
+        print("[Ngrok] Запуск туннеля...")
         ngrok_cmd = f"./ngrok http 127.0.0.1:{GOTTY_PORT} --pooling-enabled"
         
         process = subprocess.Popen(
@@ -119,16 +119,16 @@ def start_ngrok():
             preexec_fn=os.setsid
         )
         
-        # Читаем вывод
+        # Читаем вывод для получения ссылки
         def read_output():
             for line in iter(process.stdout.readline, ''):
                 if "Forwarding" in line:
-                    print(f"[Ngrok LINK] {line.strip()}")
+                    print(f"[Ngrok] Ссылка: {line.strip()}")
         
         threading.Thread(target=read_output, daemon=True).start()
         
         time.sleep(5)
-        print("[Ngrok] Запущен")
+        print("[✓] Ngrok запущен")
         return True
         
     except Exception as e:
@@ -137,7 +137,8 @@ def start_ngrok():
 
 def restart_services():
     """Перезапускает gotty и ngrok"""
-    print("\n[Restart] Перезапуск сервисов...")
+    current_time = datetime.now().strftime("%H:%M:%S")
+    print(f"\n[{current_time}] Перезапуск сервисов...")
     
     # Убиваем всё
     subprocess.run(["pkill", "-9", "gotty"], 
@@ -149,20 +150,23 @@ def restart_services():
     time.sleep(3)
     
     # Запускаем
-    start_gotty()
-    time.sleep(2)
-    start_ngrok()
+    if start_gotty():
+        time.sleep(2)
+        start_ngrok()
 
 def watchdog():
-    """Следит и перезапускает каждые 10 минут"""
-    print("[Watchdog] Запущен (перезапуск каждые 10 минут)")
+    """Перезапускает каждые 2 часа"""
+    print(f"[Watchdog] Запущен (перезапуск каждые {RESTART_HOURS} часа)")
     
     # Первый запуск
     restart_services()
     
     while True:
-        time.sleep(600)  # 10 минут
-        print("\n[Watchdog] Перезапуск по расписанию...")
+        # Ждем 2 часа
+        print(f"[Watchdog] Следующий перезапуск через {RESTART_HOURS} часа...")
+        time.sleep(RESTART_SECONDS)
+        
+        # Перезапускаем
         restart_services()
 
 # ==================== HTTP СЕРВЕР ====================
@@ -183,15 +187,18 @@ def create_http_server(port):
                 while True:
                     try:
                         client, addr = sock.accept()
-                        client.recv(1024)  # Читаем запрос
+                        client.recv(1024)
                         
                         response = f"""HTTP/1.1 200 OK
 Content-Type: text/html
 
-<html><body>
+<html>
+<body style="font-family: Arial; padding: 20px;">
 <h1>FunPay Cardinal Bot</h1>
-<p>Консоль: <a href="http://127.0.0.1:{GOTTY_PORT}">http://127.0.0.1:{GOTTY_PORT}</a></p>
-</body></html>"""
+<p>Консоль доступна на порту: {GOTTY_PORT}</p>
+<p>Время: {datetime.now().strftime('%H:%M:%S')}</p>
+</body>
+</html>"""
                         
                         client.send(response.encode())
                         client.close()
@@ -208,55 +215,77 @@ Content-Type: text/html
     thread = threading.Thread(target=server_thread, daemon=True)
     thread.start()
 
+# ==================== ПИНГИ ДЛЯ KOYEB ====================
+
+def setup_pings():
+    """Пинги для поддержания активности"""
+    def pinger():
+        time.sleep(30)  # Ждем 30 секунд перед первым пингом
+        counter = 0
+        
+        while True:
+            try:
+                counter += 1
+                current_time = datetime.now().strftime("%H:%M:%S")
+                
+                # Пинг Google
+                try:
+                    requests.get("https://www.google.com", timeout=10)
+                    if counter % 10 == 0:  # Логируем каждые 10 пингов
+                        print(f"[{current_time}] Пинг #{counter}: OK")
+                except:
+                    if counter % 10 == 0:
+                        print(f"[{current_time}] Пинг #{counter}: Ошибка")
+                
+                # Ждем 4 минуты между пингами
+                time.sleep(240)
+                
+            except Exception as e:
+                print(f"[Pinger] Ошибка: {e}")
+                time.sleep(60)
+    
+    threading.Thread(target=pinger, daemon=True).start()
+    print("[Pinger] Запущен")
+
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
 def initialize():
-    """Инициализация"""
+    """Инициализация системы"""
     print("=" * 50)
-    print("FunPay Cardinal Bot + Console")
-    print(f"Bot порт: {KOYEB_PORT}")
-    print(f"Console порт: {GOTTY_PORT}")
+    print("FunPay Cardinal Bot")
+    print("=" * 50)
+    print(f"Бот порт: {KOYEB_PORT}")
+    print(f"Консоль порт: {GOTTY_PORT}")
+    print(f"Перезапуск: каждые {RESTART_HOURS} часа")
+    print(f"Время запуска: {datetime.now().strftime('%H:%M:%S')}")
     print("=" * 50)
     
     # Запускаем сервер
     create_http_server(KOYEB_PORT)
+    
+    # Запускаем пинги
+    setup_pings()
     
     # Запускаем watchdog
     threading.Thread(target=watchdog, daemon=True).start()
     
     print("[System] Система запущена")
 
-# ==================== ЗАПУСК ====================
+# ==================== ЗАПУСК СИСТЕМЫ ====================
 
 # Инициализируем
 initialize()
 time.sleep(3)
 
-print(f"\n📌 ИНСТРУКЦИЯ:")
-print(f"1. Откройте: http://127.0.0.1:{GOTTY_PORT}")
-print(f"2. В терминале выполните: cd freeroot && bash root.sh && su")
-print(f"3. Консоль перезапускается каждые 10 минут")
-print(f"4. Ссылка ngrok появится выше (ищите 'Forwarding')")
-
-# Установка зависимостей для Cardinal
-print("\n[Setup] Проверка зависимостей...")
-while True:
-    try:
-        import lxml
-        break
-    except ModuleNotFoundError:
-        main(["install", "-U", "lxml>=5.3.0"])
-        
-while True:
-    try:
-        import bcrypt
-        break
-    except ModuleNotFoundError:
-        main(["install", "-U", "bcrypt>=4.2.0"])
-
-print("[✓] Зависимости установлены\n")
+print(f"\n✅ ГОТОВО!")
+print(f"Консоль: http://127.0.0.1:{GOTTY_PORT}")
+print(f"Для root доступа в консоли выполните:")
+print(f"cd freeroot && bash root.sh && su")
+print(f"\nАвтоперезапуск каждые {RESTART_HOURS} часа")
+print(f"Ngrok ссылка появится выше в логах")
 
 # ==================== ОРИГИНАЛЬНЫЙ КОД CARDINAL ====================
+# Всё что ниже - оригинальный код без изменений
 
 import Utils.cardinal_tools
 import Utils.config_loader as cfg_loader
