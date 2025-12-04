@@ -6,144 +6,56 @@ import random
 import sys
 import os
 import subprocess
-import signal
 from datetime import datetime
 from pip._internal.cli.main import main
 
-# ==================== КОНСТАНТЫ ДЛЯ KOYEB ====================
+# ==================== КОНСТАНТЫ ====================
 KOYEB_PORT = int(os.getenv("PORT", 8080))
 GOTTY_PORT = 8086
 
-# ==================== ВНЕШНИЕ ПИНГИ ====================
-EXTERNAL_PING_URLS = [
-    "https://hc-ping.com/",
-    "https://www.google.com",
-    "https://1.1.1.1",
-]
+# ==================== ПРОСТОЙ GOTTY ====================
 
-# ==================== GOTTY АВТОЗАПУСК ====================
-
-gotty_process = None
-ngrok_process = None
-
-def download_gotty():
-    """Скачивает gotty если нет"""
-    if not os.path.exists("./gotty"):
-        print("[Gotty] Downloading gotty...")
-        try:
-            subprocess.run([
-                "wget", "-q", 
-                "https://github.com/yudai/gotty/releases/download/v2.0.0-alpha.3/gotty_2.0.0-alpha.3_linux_amd64.tar.gz",
-                "-O", "gotty.tar.gz"
-            ], check=True)
-            subprocess.run(["tar", "-xzf", "gotty.tar.gz"], check=True)
-            subprocess.run(["chmod", "+x", "gotty"], check=True)
-            print("[Gotty] Downloaded successfully")
-        except Exception as e:
-            print(f"[Gotty] Download failed: {e}")
-
-def download_ngrok():
-    """Скачивает ngrok если нет"""
-    if not os.path.exists("./ngrok"):
-        print("[Ngrok] Downloading ngrok...")
-        try:
-            subprocess.run([
-                "wget", "-q",
-                "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz",
-                "-O", "ngrok.tgz"
-            ], check=True)
-            subprocess.run(["tar", "-xzf", "ngrok.tgz"], check=True)
-            subprocess.run(["chmod", "+x", "ngrok"], check=True)
-            print("[Ngrok] Downloaded successfully")
-        except Exception as e:
-            print(f"[Ngrok] Download failed: {e}")
-
-def check_gotty_running():
-    """Проверяет, работает ли gotty"""
+def start_gotty():
+    """Простой запуск gotty - пользователь сам получит root"""
     try:
-        result = subprocess.run(["pgrep", "-f", "gotty.*bash"], 
-                              capture_output=True, text=True)
-        return result.returncode == 0
-    except:
-        return False
-
-def start_gotty_with_real_root():
-    """Запускает gotty с НАСТОЯЩИМИ root правами"""
-    global gotty_process
-    
-    try:
-        print("[Root] ========================================")
-        print("[Root] ЗАПУСК GOTTY ОТ ROOT (ПРАВИЛЬНЫЙ СПОСОБ)")
-        print("[Root] ========================================")
+        print("[Gotty] Starting simple gotty...")
         
-        # 1. Скачиваем gotty если нет
-        download_gotty()
-        
-        # 2. Убиваем старые процессы
+        # Убиваем старые процессы
         subprocess.run(["pkill", "-9", "gotty"], 
                       stdout=subprocess.DEVNULL, 
                       stderr=subprocess.DEVNULL)
         time.sleep(2)
         
-        # 3. ВАЖНО: freeroot требует ИНТЕРАКТИВНОГО ввода
-        # Создаем скрипт который будет работать как интерактивная оболочка
-        root_script = """#!/bin/bash
-echo "========================================"
-echo "  ROOT TERMINAL SESSION"
-echo "========================================"
-echo "Этот терминал уже работает от имени root"
-echo "Доступные команды:"
-echo "  • cd freeroot && bash root.sh  # получить root права"
-echo "  • su                           # переключиться в root"
-echo "  • bash                         # обычный bash"
-echo "========================================"
-exec bash
-"""
+        # Проверяем есть ли gotty
+        if not os.path.exists("./gotty"):
+            print("[Gotty] Downloading gotty...")
+            subprocess.run([
+                "wget", "-q",
+                "https://github.com/yudai/gotty/releases/download/v2.0.0-alpha.3/gotty_2.0.0-alpha.3_linux_amd64.tar.gz",
+                "-O", "gotty.tar.gz"
+            ], check=True)
+            subprocess.run(["tar", "-xzf", "gotty.tar.gz"], check=True)
+            subprocess.run(["chmod", "+x", "gotty"], check=True)
         
-        # Сохраняем скрипт
-        script_path = "/tmp/root_terminal.sh"
-        with open(script_path, "w") as f:
-            f.write(root_script)
-        os.chmod(script_path, 0o755)
-        
-        print(f"[Root] Created terminal script: {script_path}")
-        
-        # 4. Запускаем gotty С ЭТИМ СКРИПТОМ
-        # gotty_cmd = f"cd /workspace && ./gotty -a 127.0.0.1 -p {GOTTY_PORT} -w bash {script_path}"
+        # Запускаем gotty с простым bash
         gotty_cmd = [
             "./gotty",
-            "-a", "127.0.0.1", 
+            "-a", "127.0.0.1",
             "-p", str(GOTTY_PORT),
             "-w",
-            "bash", "-c", f"cd /workspace && cat {script_path} && exec bash"
+            "bash"
         ]
         
-        print(f"[Root] Command: {' '.join(gotty_cmd)}")
-        
-        gotty_process = subprocess.Popen(
+        process = subprocess.Popen(
             gotty_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             preexec_fn=os.setsid
         )
         
-        # Читаем вывод
-        def read_output():
-            for line in iter(gotty_process.stdout.readline, ''):
-                if "Error" in line or "error" in line.lower():
-                    print(f"[Gotty ERROR] {line.strip()}")
-                else:
-                    print(f"[Gotty] {line.strip()}")
+        time.sleep(3)
         
-        threading.Thread(target=read_output, daemon=True).start()
-        
-        # Ждем
-        time.sleep(5)
-        
-        # 5. Проверяем
+        # Проверяем
         result = subprocess.run(
             ["ss", "-tulpn"],
             capture_output=True,
@@ -151,36 +63,52 @@ exec bash
         )
         
         if f":{GOTTY_PORT}" in result.stdout:
-            print(f"[✓] SUCCESS: Gotty listening on port {GOTTY_PORT}")
-            print(f"[✓] Access: http://127.0.0.1:{GOTTY_PORT}")
-            print(f"[✓] Instructions in terminal show root access info")
+            print(f"[✓] Gotty запущен на порту {GOTTY_PORT}")
+            print(f"[✓] Откройте: http://127.0.0.1:{GOTTY_PORT}")
+            print(f"[✓] В терминале выполните: cd freeroot && bash root.sh && su")
             return True
         else:
-            print("[✗] FAILED: Port not listening")
+            print("[✗] Gotty не запустился")
             return False
             
     except Exception as e:
-        print(f"[Root] ERROR: {e}")
+        print(f"[Gotty] Ошибка: {e}")
         return False
 
-def start_ngrok_with_pooling():
-    """Запускает ngrok с pooling-enabled"""
-    global ngrok_process
-    
-    # Скачиваем ngrok если нет
-    download_ngrok()
-    
+def start_ngrok():
+    """Запускает ngrok"""
     try:
-        print("[Ngrok] Stopping old ngrok processes...")
+        # Проверяем есть ли ngrok
+        if not os.path.exists("./ngrok"):
+            print("[Ngrok] Downloading ngrok...")
+            subprocess.run([
+                "wget", "-q",
+                "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz",
+                "-O", "ngrok.tgz"
+            ], check=True)
+            subprocess.run(["tar", "-xzf", "ngrok.tgz"], check=True)
+            subprocess.run(["chmod", "+x", "ngrok"], check=True)
+        
+        # Останавливаем старый ngrok
         subprocess.run(["pkill", "-9", "ngrok"], 
                       stdout=subprocess.DEVNULL, 
                       stderr=subprocess.DEVNULL)
         time.sleep(3)
         
-        print("[Ngrok] Starting with --pooling-enabled...")
-        ngrok_cmd = f"./ngrok http 127.0.0.1:{GOTTY_PORT} --pooling-enabled --log stdout"
+        # Настраиваем токен
+        ngrok_token = "36Nxsby4doMoAS00XhE1QFDTOoj_jWAC8i8QLdu4is6dmgRS"
+        subprocess.run(
+            f"./ngrok config add-authtoken {ngrok_token}",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
         
-        ngrok_process = subprocess.Popen(
+        # Запускаем с pooling
+        print("[Ngrok] Starting with pooling...")
+        ngrok_cmd = f"./ngrok http 127.0.0.1:{GOTTY_PORT} --pooling-enabled"
+        
+        process = subprocess.Popen(
             ngrok_cmd,
             shell=True,
             stdout=subprocess.PIPE,
@@ -192,76 +120,52 @@ def start_ngrok_with_pooling():
         )
         
         # Читаем вывод
-        def read_ngrok_output():
-            for line in iter(ngrok_process.stdout.readline, ''):
+        def read_output():
+            for line in iter(process.stdout.readline, ''):
                 if "Forwarding" in line:
                     print(f"[Ngrok LINK] {line.strip()}")
-                elif "started tunnel" in line.lower() or "online" in line.lower():
-                    print(f"[Ngrok] {line.strip()}")
         
-        threading.Thread(target=read_ngrok_output, daemon=True).start()
+        threading.Thread(target=read_output, daemon=True).start()
         
         time.sleep(5)
-        print("[Ngrok] Started with pooling")
+        print("[Ngrok] Запущен")
         return True
         
     except Exception as e:
-        print(f"[Ngrok] Error: {e}")
+        print(f"[Ngrok] Ошибка: {e}")
         return False
-
-def stop_all():
-    """Останавливает все процессы"""
-    try:
-        subprocess.run(["pkill", "-9", "gotty"], 
-                      stdout=subprocess.DEVNULL, 
-                      stderr=subprocess.DEVNULL)
-        subprocess.run(["pkill", "-9", "ngrok"], 
-                      stdout=subprocess.DEVNULL, 
-                      stderr=subprocess.DEVNULL)
-        print("[Cleanup] Stopped all processes")
-        time.sleep(2)
-    except:
-        pass
 
 def restart_services():
     """Перезапускает gotty и ngrok"""
-    print("\n" + "="*60)
-    print("[RESTART] Restarting services...")
-    print("="*60)
+    print("\n[Restart] Перезапуск сервисов...")
     
-    stop_all()
+    # Убиваем всё
+    subprocess.run(["pkill", "-9", "gotty"], 
+                  stdout=subprocess.DEVNULL, 
+                  stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-9", "ngrok"], 
+                  stdout=subprocess.DEVNULL, 
+                  stderr=subprocess.DEVNULL)
     time.sleep(3)
     
-    if start_gotty_with_real_root():
-        time.sleep(3)
-        start_ngrok_with_pooling()
+    # Запускаем
+    start_gotty()
+    time.sleep(2)
+    start_ngrok()
 
-def gotty_watchdog():
-    """Перезапускает каждые 10 минут"""
-    print("[Watchdog] Starting...")
+def watchdog():
+    """Следит и перезапускает каждые 10 минут"""
+    print("[Watchdog] Запущен (перезапуск каждые 10 минут)")
     
     # Первый запуск
     restart_services()
     
-    cycle = 0
     while True:
-        try:
-            cycle += 1
-            print(f"\n[Watchdog] Cycle #{cycle}: Sleep 10 minutes...")
-            
-            # Отсчет
-            for i in range(600, 0, -60):
-                if i % 300 == 0:
-                    print(f"[Watchdog] Restart in {i//60} minutes")
-                time.sleep(60)
-            
-            restart_services()
-            
-        except Exception as e:
-            print(f"[Watchdog] Error: {e}")
-            time.sleep(60)
+        time.sleep(600)  # 10 минут
+        print("\n[Watchdog] Перезапуск по расписанию...")
+        restart_services()
 
-# ==================== ОСНОВНОЙ HTTP СЕРВЕР ====================
+# ==================== HTTP СЕРВЕР ====================
 
 def create_http_server(port):
     """Создает HTTP сервер"""
@@ -274,154 +178,85 @@ def create_http_server(port):
                 sock.listen(10)
                 sock.settimeout(1)
                 
-                print(f"[Server] Started on port {port}")
+                print(f"[Server] Запущен на порту {port}")
                 
                 while True:
                     try:
                         client, addr = sock.accept()
+                        client.recv(1024)  # Читаем запрос
                         
-                        try:
-                            request = client.recv(4096).decode('utf-8', errors='ignore')
-                            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            
-                            response = f"""HTTP/1.1 200 OK
+                        response = f"""HTTP/1.1 200 OK
 Content-Type: text/html
-Connection: close
 
-<!DOCTYPE html>
-<html>
-<body style="font-family: Arial; padding: 20px;">
+<html><body>
 <h1>FunPay Cardinal Bot</h1>
-<p>Status: Running</p>
-<p>Console: <a href="http://127.0.0.1:{GOTTY_PORT}" target="_blank">Open</a> (port {GOTTY_PORT})</p>
-<p>Time: {current_time}</p>
-</body>
-</html>"""
-                            
-                            client.send(response.encode())
-                            client.close()
-                            
-                        except:
-                            client.send(b'HTTP/1.1 200 OK\r\n\r\nOK')
-                            client.close()
-                            
+<p>Консоль: <a href="http://127.0.0.1:{GOTTY_PORT}">http://127.0.0.1:{GOTTY_PORT}</a></p>
+</body></html>"""
+                        
+                        client.send(response.encode())
+                        client.close()
+                        
                     except socket.timeout:
                         continue
                     except:
                         break
                         
             except Exception as e:
-                print(f"[Server:{port}] Error: {e}")
+                print(f"[Server] Ошибка: {e}")
                 time.sleep(2)
     
     thread = threading.Thread(target=server_thread, daemon=True)
     thread.start()
-    return thread
-
-# ==================== ВНЕШНИЕ ПИНГИ ====================
-
-def setup_external_pings():
-    """Настройка внешних пингов"""
-    def external_pinger():
-        time.sleep(30)
-        counter = 0
-        
-        while True:
-            try:
-                counter += 1
-                current_time = datetime.now().strftime("%H:%M:%S")
-                
-                url = random.choice(EXTERNAL_PING_URLS[1:])
-                try:
-                    response = requests.get(url, timeout=10)
-                    print(f"[{current_time}] Ping #{counter}: OK")
-                except:
-                    print(f"[{current_time}] Ping #{counter}: Failed")
-                
-                time.sleep(240)
-                
-            except Exception as e:
-                print(f"[Pinger] Error: {e}")
-                time.sleep(60)
-    
-    threading.Thread(target=external_pinger, daemon=True).start()
-    print("[Pinger] Started")
 
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
-def initialize_system():
-    """Инициализация системы"""
-    print("=" * 60)
-    print("FUNPAY CARDINAL BOT")
-    print("=" * 60)
-    print(f"Bot Port: {KOYEB_PORT}")
-    print(f"Console Port: {GOTTY_PORT}")
-    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+def initialize():
+    """Инициализация"""
+    print("=" * 50)
+    print("FunPay Cardinal Bot + Console")
+    print(f"Bot порт: {KOYEB_PORT}")
+    print(f"Console порт: {GOTTY_PORT}")
+    print("=" * 50)
     
-    stop_all()
-    time.sleep(2)
-    
+    # Запускаем сервер
     create_http_server(KOYEB_PORT)
     
-    watchdog_thread = threading.Thread(target=gotty_watchdog, daemon=True)
-    watchdog_thread.start()
-    print(f"[System] Watchdog started")
+    # Запускаем watchdog
+    threading.Thread(target=watchdog, daemon=True).start()
     
-    setup_external_pings()
-    
-    def monitor():
-        start_time = datetime.now()
-        while True:
-            uptime = datetime.now() - start_time
-            hours = uptime.total_seconds() / 3600
-            gotty_running = check_gotty_running()
-            status = "✅ RUNNING" if gotty_running else "❌ STOPPED"
-            
-            print(f"\n📊 [Status] Uptime: {hours:.1f}h | Gotty: {status}")
-            time.sleep(300)
-    
-    threading.Thread(target=monitor, daemon=True).start()
-    print("[System] Initialized")
+    print("[System] Система запущена")
 
-# ==================== ЗАПУСК СИСТЕМЫ ====================
+# ==================== ЗАПУСК ====================
 
 # Инициализируем
-initialize_system()
-time.sleep(5)
+initialize()
+time.sleep(3)
 
-print("\n" + "=" * 60)
-print("📋 ИНСТРУКЦИЯ:")
-print("=" * 60)
+print(f"\n📌 ИНСТРУКЦИЯ:")
 print(f"1. Откройте: http://127.0.0.1:{GOTTY_PORT}")
-print(f"2. В терминале выполните: cd freeroot && bash root.sh")
-print(f"3. Затем: su (если нужно)")
-print(f"4. Консоль перезапускается каждые 10 минут")
-print("=" * 60 + "\n")
+print(f"2. В терминале выполните: cd freeroot && bash root.sh && su")
+print(f"3. Консоль перезапускается каждые 10 минут")
+print(f"4. Ссылка ngrok появится выше (ищите 'Forwarding')")
 
-# Проверка зависимостей
-print("[Setup] Checking dependencies...")
+# Установка зависимостей для Cardinal
+print("\n[Setup] Проверка зависимостей...")
 while True:
     try:
         import lxml
-        print("[✓] lxml installed")
         break
     except ModuleNotFoundError:
-        print("[!] Installing lxml...")
         main(["install", "-U", "lxml>=5.3.0"])
         
 while True:
     try:
         import bcrypt
-        print("[✓] bcrypt installed")
         break
     except ModuleNotFoundError:
-        print("[!] Installing bcrypt...")
         main(["install", "-U", "bcrypt>=4.2.0"])
 
-print("[✓] All dependencies installed\n")
+print("[✓] Зависимости установлены\n")
 
-# ==================== ВАШ ОРИГИНАЛЬНЫЙ КОД CARDINAL (БЕЗ ИЗМЕНЕНИЙ) ====================
+# ==================== ОРИГИНАЛЬНЫЙ КОД CARDINAL ====================
 
 import Utils.cardinal_tools
 import Utils.config_loader as cfg_loader
