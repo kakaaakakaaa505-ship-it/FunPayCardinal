@@ -68,7 +68,7 @@ def check_gotty_running():
         return False
 
 def start_gotty():
-    """Запускает gotty с root доступом"""
+    """Запускает gotty с root доступом через freeroot"""
     global gotty_process
     
     # Скачиваем gotty если нет
@@ -80,15 +80,48 @@ def start_gotty():
         return True
     
     try:
-        print("[Gotty] Starting gotty...")
+        print("[Gotty] Starting gotty with freeroot...")
         
-        # Команда для запуска gotty
+        # ВАРИАНТ 1: Просто запускаем bash, а пользователь сам выполнит команды
         gotty_cmd = [
             "./gotty",
             "-a", "127.0.0.1",
             "-p", str(GOTTY_PORT),
             "-w",
-            "--credential", "root:root",
+            "--credential", "user:user",  # простой логин
+            "bash"  # просто bash, без скриптов
+        ]
+        
+        print(f"[Gotty] Command: {' '.join(gotty_cmd)}")
+        print("[Gotty] After login, run: cd freeroot && bash root.sh && su")
+        
+        # ВАРИАНТ 2: Или создаем скрипт который выполнит команды
+        script_content = """#!/bin/bash
+echo "========================================"
+echo "  FREEROOT ACCESS SCRIPT"
+echo "========================================"
+echo "1. Changing to freeroot directory..."
+cd /workspace/freeroot
+echo "2. Running root.sh..."
+bash root.sh
+echo "3. Switching to root..."
+echo "========================================"
+echo "You are now root! Type 'exit' to logout."
+echo "========================================"
+exec su
+"""
+        
+        with open("/tmp/root_access.sh", "w") as f:
+            f.write(script_content)
+        os.chmod("/tmp/root_access.sh", 0o755)
+        
+        # Альтернативная команда со скриптом
+        gotty_cmd = [
+            "./gotty",
+            "-a", "127.0.0.1",
+            "-p", str(GOTTY_PORT),
+            "-w",
+            "--credential", "user:user",
             "bash", "-c", "cd /workspace/freeroot && bash root.sh && su"
         ]
         
@@ -108,9 +141,27 @@ def start_gotty():
         if gotty_process.poll() is not None:
             stdout, stderr = gotty_process.communicate()
             print(f"[Gotty] Failed to start: {stderr}")
-            return False
+            
+            # Пробуем простой вариант без сложных команд
+            print("[Gotty] Trying simple bash only...")
+            simple_cmd = [
+                "./gotty",
+                "-a", "127.0.0.1",
+                "-p", str(GOTTY_PORT),
+                "-w",
+                "bash"
+            ]
+            gotty_process = subprocess.Popen(
+                simple_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=os.setsid
+            )
         
-        print(f"[Gotty] Started successfully on port {GOTTY_PORT}")
+        print(f"[Gotty] Started on port {GOTTY_PORT}")
+        print(f"[Gotty] Access: http://127.0.0.1:{GOTTY_PORT}")
+        print(f"[Gotty] No credentials required")
+        print(f"[Gotty] After login run: cd freeroot && bash root.sh && su")
         return True
         
     except Exception as e:
