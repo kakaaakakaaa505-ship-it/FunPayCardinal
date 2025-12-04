@@ -12,7 +12,7 @@ from datetime import datetime
 KOYEB_PORT = int(os.getenv("PORT", 8080))
 GOTTY_PORT = 8086
 RESTART_HOURS = 2  # Перезапуск каждые 2 часа
-RESTART_SECONDS = RESTART_HOURS * 3600  # 2 часа в секундах
+RESTART_SECONDS = 600  # 2 часа в секундах
 
 # ==================== ПРОСТОЙ GOTTY ====================
 
