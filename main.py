@@ -67,105 +67,109 @@ def check_gotty_running():
     except:
         return False
 
-def start_gotty():
-    """Запускает gotty с root доступом через freeroot"""
+def start_gotty_via_freeroot():
+    """Запускает gotty ЧЕРЕЗ FREEROOT напрямую (сначала root, потом gotty)"""
     global gotty_process
     
-    # Скачиваем gotty если нет
-    download_gotty()
-    
-    # Проверяем, не запущен ли уже
-    if check_gotty_running():
-        print("[Gotty] Already running (checked by pgrep)")
-        return True
-    
     try:
-        print("[Gotty] Starting gotty with freeroot...")
+        print("[Gotty] ========================================")
+        print("[Gotty] STARTING via FREEROOT (ROOT FIRST)")
+        print("[Gotty] ========================================")
         
-        # ВАРИАНТ 1: Просто запускаем bash, а пользователь сам выполнит команды
-        gotty_cmd = [
-            "./gotty",
-            "-a", "127.0.0.1",
-            "-p", str(GOTTY_PORT),
-            "-w",
-            "--credential", "user:user",  # простой логин
-            "bash"  # просто bash, без скриптов
-        ]
+        # 1. Скачиваем gotty если нет
+        download_gotty()
         
-        print(f"[Gotty] Command: {' '.join(gotty_cmd)}")
-        print("[Gotty] After login, run: cd freeroot && bash root.sh && su")
+        # 2. Убиваем старые процессы
+        subprocess.run(["pkill", "-9", "gotty"], 
+                      stdout=subprocess.DEVNULL, 
+                      stderr=subprocess.DEVNULL)
+        time.sleep(2)
         
-        # ВАРИАНТ 2: Или создаем скрипт который выполнит команды
-        script_content = """#!/bin/bash
+        # 3. Создаем скрипт который:
+        #    - Заходит в freeroot
+        #    - Получает root права (bash root.sh)
+        #    - Запускает gotty ИЗ-ПОД root
+        root_gotty_script = """#!/bin/bash
 echo "========================================"
-echo "  FREEROOT ACCESS SCRIPT"
+echo "  FREEROOT -> ROOT -> GOTTY"
 echo "========================================"
-echo "1. Changing to freeroot directory..."
+
+# Переходим в freeroot
 cd /workspace/freeroot
-echo "2. Running root.sh..."
+echo "[1] In freeroot directory: $(pwd)"
+
+# Получаем root права
+echo "[2] Getting root access..."
 bash root.sh
-echo "3. Switching to root..."
+echo "[3] Now user: $(whoami)"
+
+# Теперь мы root, запускаем gotty
+echo "[4] Starting gotty as $(whoami)..."
+cd /workspace
+./gotty -a 127.0.0.1 -p 8086 -w bash
+
+echo "[5] Gotty is running"
 echo "========================================"
-echo "You are now root! Type 'exit' to logout."
-echo "========================================"
-exec su
 """
         
-        with open("/tmp/root_access.sh", "w") as f:
-            f.write(script_content)
-        os.chmod("/tmp/root_access.sh", 0o755)
+        # Сохраняем скрипт
+        script_path = "/tmp/root_gotty_launcher.sh"
+        with open(script_path, "w") as f:
+            f.write(root_gotty_script)
+        os.chmod(script_path, 0o755)
         
-        # Альтернативная команда со скриптом
-        gotty_cmd = [
-            "./gotty",
-            "-a", "127.0.0.1",
-            "-p", str(GOTTY_PORT),
-            "-w",
-            "--credential", "user:user",
-            "bash", "-c", "cd /workspace/freeroot && bash root.sh && su"
-        ]
+        print(f"[Gotty] Created launcher script: {script_path}")
         
-        # Запускаем gotty
+        # 4. Запускаем скрипт
+        print("[Gotty] Executing launcher script...")
         gotty_process = subprocess.Popen(
-            gotty_cmd,
+            script_path,
+            shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,
+            universal_newlines=True,
             preexec_fn=os.setsid
         )
         
+        # Читаем вывод в реальном времени
+        def read_output():
+            for line in iter(gotty_process.stdout.readline, ''):
+                print(f"[Gotty Output] {line.strip()}")
+        
+        # Запускаем чтение вывода в отдельном потоке
+        output_thread = threading.Thread(target=read_output, daemon=True)
+        output_thread.start()
+        
         # Ждем запуска
-        time.sleep(3)
+        print("[Gotty] Waiting for startup...")
+        time.sleep(5)
         
-        # Проверяем, запустился ли
-        if gotty_process.poll() is not None:
-            stdout, stderr = gotty_process.communicate()
-            print(f"[Gotty] Failed to start: {stderr}")
+        # 5. Проверяем запустился ли
+        result = subprocess.run(
+            ["ss", "-tulpn"],
+            capture_output=True,
+            text=True
+        )
+        
+        if f":{GOTTY_PORT}" in result.stdout:
+            print(f"[✓] SUCCESS: Gotty running on port {GOTTY_PORT}")
+            print(f"[✓] Access: http://127.0.0.1:{GOTTY_PORT}")
+            print(f"[✓] Running as root (via freeroot)")
+            return True
+        else:
+            print("[✗] FAILED: Gotty not listening on port")
+            # Показываем ошибки
+            gotty_process.terminate()
+            stdout, stderr = gotty_process.communicate(timeout=5)
+            print(f"[Gotty Stderr]: {stderr}")
+            return False
             
-            # Пробуем простой вариант без сложных команд
-            print("[Gotty] Trying simple bash only...")
-            simple_cmd = [
-                "./gotty",
-                "-a", "127.0.0.1",
-                "-p", str(GOTTY_PORT),
-                "-w",
-                "bash"
-            ]
-            gotty_process = subprocess.Popen(
-                simple_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                preexec_fn=os.setsid
-            )
-        
-        print(f"[Gotty] Started on port {GOTTY_PORT}")
-        print(f"[Gotty] Access: http://127.0.0.1:{GOTTY_PORT}")
-        print(f"[Gotty] No credentials required")
-        print(f"[Gotty] After login run: cd freeroot && bash root.sh && su")
-        return True
-        
     except Exception as e:
-        print(f"[Gotty] Error starting: {e}")
+        print(f"[Gotty] ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def start_ngrok():
@@ -186,20 +190,32 @@ def start_ngrok():
         
         print("[Ngrok] Starting tunnel...")
         # Запускаем ngrok
-        ngrok_cmd = f"./ngrok http 127.0.0.1:{GOTTY_PORT}"
+        ngrok_cmd = f"./ngrok http 127.0.0.1:{GOTTY_PORT} --log stdout"
         ngrok_process = subprocess.Popen(
             ngrok_cmd,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
+            universal_newlines=True,
             preexec_fn=os.setsid
         )
         
-        # Ждем запуска
-        time.sleep(5)
+        # Читаем вывод чтобы получить ссылку
+        def read_ngrok_output():
+            for line in iter(ngrok_process.stdout.readline, ''):
+                if "Forwarding" in line:
+                    print(f"[Ngrok LINK] {line.strip()}")
+                elif "started tunnel" in line.lower():
+                    print(f"[Ngrok] {line.strip()}")
+                elif "error" in line.lower():
+                    print(f"[Ngrok ERROR] {line.strip()}")
         
-        print("[Ngrok] Started (check output for URL)")
+        threading.Thread(target=read_ngrok_output, daemon=True).start()
+        
+        time.sleep(5)
+        print("[Ngrok] Started (check above for URL)")
         return True
         
     except Exception as e:
@@ -220,35 +236,46 @@ def stop_all():
                       stderr=subprocess.DEVNULL)
         
         print("[Cleanup] Stopped all processes")
+        time.sleep(2)
     except:
         pass
 
 def restart_gotty():
     """Перезапускает gotty"""
-    print("[Restart] Restarting gotty and ngrok...")
+    print("\n" + "="*60)
+    print("[RESTART] Restarting gotty + ngrok...")
+    print("="*60)
+    
     stop_all()
     time.sleep(3)
     
-    # Запускаем gotty
-    if start_gotty():
+    # Запускаем gotty через freeroot
+    if start_gotty_via_freeroot():
         # Если gotty запустился, запускаем ngrok
-        time.sleep(2)
+        time.sleep(3)
         start_ngrok()
     else:
-        print("[Restart] Failed to restart gotty")
+        print("[RESTART] Failed to restart gotty")
 
 def gotty_watchdog():
     """Следит за gotty и перезапускает каждые 10 минут"""
-    print("[Watchdog] Starting watchdog...")
+    print("[Watchdog] Starting watchdog (10 minute cycles)...")
     
     # Первый запуск
     restart_gotty()
     
+    cycle_count = 0
     while True:
         try:
             # Ждем 10 минут (600 секунд)
-            print("[Watchdog] Sleeping for 10 minutes...")
-            time.sleep(600)
+            cycle_count += 1
+            print(f"\n[Watchdog] Cycle #{cycle_count}: Sleeping for 10 minutes...")
+            
+            # Отсчет
+            for i in range(600, 0, -60):
+                if i % 300 == 0:  # Каждые 5 минут
+                    print(f"[Watchdog] Next restart in {i//60} minutes...")
+                time.sleep(60)
             
             # Перезапускаем
             restart_gotty()
@@ -291,15 +318,16 @@ Connection: close
 <!DOCTYPE html>
 <html>
 <body style="font-family: Arial; padding: 20px;">
-<h1>FunPay Cardinal Bot Control Panel</h1>
-<div style="background: #f0f0f0; padding: 20px; border-radius: 10px; margin: 20px 0;">
-<h3>Console Access</h3>
-<p>• Bot Status: <span style="color: green;">Running</span></p>
-<p>• Console Port: {GOTTY_PORT}</p>
-<p>• Time: {current_time}</p>
-<p>• Requests: {request_count}</p>
+<h1>FunPay Cardinal Bot + ROOT Console</h1>
+<div style="background: #e8f4f8; padding: 20px; border-radius: 10px; margin: 20px 0;">
+<h3>🔧 ROOT Console Access</h3>
+<p><strong>Local:</strong> <a href="http://127.0.0.1:{GOTTY_PORT}" target="_blank">http://127.0.0.1:{GOTTY_PORT}</a></p>
+<p><strong>Status:</strong> <span style="color: green;">● Running as ROOT</span></p>
+<p><strong>Auto-restart:</strong> Every 10 minutes</p>
+<p><strong>Bot port:</strong> {port}</p>
+<p><strong>Time:</strong> {current_time}</p>
 </div>
-<p><a href="http://127.0.0.1:{GOTTY_PORT}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Open Root Console</a></p>
+<p><button onclick="window.open('http://127.0.0.1:{GOTTY_PORT}', '_blank')" style="background: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer;">Open ROOT Console</button></p>
 </body>
 </html>"""
                             elif 'GET /health' in request:
@@ -307,7 +335,7 @@ Connection: close
 Content-Type: application/json
 Connection: close
 
-{{"status": "ok", "bot": "running", "console_port": {GOTTY_PORT}, "time": "{current_time}"}}"""
+{{"status": "ok", "bot": "running", "console": "running", "console_port": {GOTTY_PORT}, "root_access": true, "time": "{current_time}"}}"""
                             else:
                                 response = f"""HTTP/1.1 200 OK
 Content-Type: text/html
@@ -318,8 +346,8 @@ Connection: close
 <body style="font-family: Arial; padding: 20px;">
 <h1>FunPay Cardinal Bot</h1>
 <p>Status: <span style="color: green;">Running</span></p>
+<p>Root Console: <a href="/console">Available</a> (port {GOTTY_PORT})</p>
 <p>Time: {current_time}</p>
-<p><a href="/console">Go to Control Panel</a></p>
 </body>
 </html>"""
                             
@@ -396,10 +424,18 @@ def setup_external_pings():
 def initialize_koyeb_system():
     """Инициализация всей системы"""
     print("=" * 60)
-    print("FUNPAY CARDINAL BOT + CONSOLE")
+    print("🎯 FUNPAY CARDINAL BOT + ROOT CONSOLE")
+    print("=" * 60)
     print(f"Bot Port: {KOYEB_PORT}")
-    print(f"Console Port: {GOTTY_PORT} (root access)")
-    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Root Console Port: {GOTTY_PORT}")
+    print(f"Console URL: http://127.0.0.1:{GOTTY_PORT}")
+    print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    print("🚀 Features:")
+    print("• Root access via freeroot")
+    print("• Auto-restart every 10 minutes")
+    print("• Ngrok tunnel for external access")
+    print("• Health monitoring")
     print("=" * 60)
     
     # Сначала очищаем старые процессы
@@ -409,10 +445,10 @@ def initialize_koyeb_system():
     # Запускаем основной сервер
     create_http_server(KOYEB_PORT)
     
-    # Запускаем watchdog для gotty
+    # Запускаем watchdog для gotty (будет запускать через freeroot)
     watchdog_thread = threading.Thread(target=gotty_watchdog, daemon=True)
     watchdog_thread.start()
-    print(f"[System] Gotty watchdog started")
+    print(f"[System] Gotty watchdog started (via freeroot)")
     
     # Запускаем внешние пинги
     setup_external_pings()
@@ -426,10 +462,14 @@ def initialize_koyeb_system():
             
             # Проверяем gotty
             gotty_running = check_gotty_running()
-            status = "RUNNING" if gotty_running else "STOPPED"
-            color = "GREEN" if gotty_running else "RED"
+            status = "✅ RUNNING" if gotty_running else "❌ STOPPED"
             
-            print(f"\n[Status] Uptime: {hours:.1f}h | Gotty: {status} | Console: http://127.0.0.1:{GOTTY_PORT}")
+            print(f"\n📊 [Status Dashboard]")
+            print(f"   Uptime: {hours:.1f} hours")
+            print(f"   Gotty: {status}")
+            print(f"   Console: http://127.0.0.1:{GOTTY_PORT}")
+            print(f"   Bot: http://127.0.0.1:{KOYEB_PORT}")
+            print(f"   Time: {datetime.now().strftime('%H:%M:%S')}")
             time.sleep(300)
     
     threading.Thread(target=monitor, daemon=True).start()
@@ -445,20 +485,22 @@ time.sleep(5)
 
 # Проверяем gotty
 if check_gotty_running():
-    print("[✓] Gotty is running successfully!")
+    print("\n" + "=" * 60)
+    print("✅ SUCCESS: Root console is RUNNING!")
+    print("=" * 60)
+    print(f"Access: http://127.0.0.1:{GOTTY_PORT}")
+    print("Credentials: None required (running as root)")
+    print("Auto-restart: Every 10 minutes")
+    print("=" * 60 + "\n")
 else:
-    print("[✗] Gotty failed to start!")
+    print("\n" + "=" * 60)
+    print("⚠️  WARNING: Console not running")
+    print("=" * 60)
+    print("Will retry via watchdog...")
+    print("=" * 60 + "\n")
 
-print("\n" + "=" * 60)
-print("ACCESS INSTRUCTIONS:")
-print(f"1. Bot interface: http://127.0.0.1:{KOYEB_PORT}")
-print(f"2. Root console: http://127.0.0.1:{GOTTY_PORT}")
-print(f"3. Login: root / root")
-print("4. Console auto-restarts every 10 minutes")
-print("=" * 60 + "\n")
-
-# Установка зависимостей
-print("[Setup] Checking dependencies...")
+# Установка зависимостей для Cardinal бота
+print("[Setup] Checking Cardinal dependencies...")
 while True:
     try:
         import lxml
