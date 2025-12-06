@@ -666,11 +666,7 @@ class Cardinal(object):
                 logger.warning("Произошла ошибка при изменении бота Telegram.")
                 logger.debug("TRACEBACK", exc_info=True)
 
-            # Запускаем Telegram бота в основном потоке, а не в отдельном
-            try:
-                self.telegram.run()
-            except:
-                pass
+            Thread(target=self.telegram.run, daemon=True).start()
 
         self.__init_account()
         self.runner = FunPayAPI.Runner(self.account, self.old_mode_enabled)
@@ -687,12 +683,8 @@ class Cardinal(object):
         self.run_handlers(self.pre_start_handlers, (self,))
         self.run_handlers(self.post_start_handlers, (self,))
 
-        # ЗАКОММЕНТИРОВАТЬ создание потоков - запускать все в основном потоке
-        # Thread(target=self.lots_raise_loop, daemon=True).start()
-        # Thread(target=self.update_session_loop, daemon=True).start()
-        
-        # Вместо потоков запускаем простой цикл для поднятия лотов
-        # и обработку событий в основном потоке
+        Thread(target=self.lots_raise_loop, daemon=True).start()
+        Thread(target=self.update_session_loop, daemon=True).start()
         self.process_events()
 
     def start(self):
