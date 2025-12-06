@@ -604,9 +604,9 @@ class Cardinal(object):
         if not self.profile.get_lots():
             logger.info(_("crd_raise_loop_not_started"))
             return
-
+    
         logger.info(_("crd_raise_loop_started"))
-        while True:
+        while not self._stop_event.is_set():
             try:
                 if not self.MAIN_CFG["FunPay"].getboolean("autoRaise"):
                     time.sleep(10)
@@ -615,9 +615,11 @@ class Cardinal(object):
                 delay = next_time - int(time.time())
                 if delay <= 0:
                     continue
-                time.sleep(delay)
-            except:
+                # Ждем с проверкой события остановки
+                self._stop_event.wait(timeout=delay)
+            except Exception as e:
                 logger.debug("TRACEBACK", exc_info=True)
+                time.sleep(10)  # Задержка при ошибке
 
     def update_session_loop(self):
         """
@@ -640,15 +642,15 @@ class Cardinal(object):
         self.add_handlers_from_plugin(announcements)
         self.load_plugins()
         self.add_handlers()
-
+    
         if self.MAIN_CFG["Telegram"].getboolean("enabled"):
             self.__init_telegram()
             for module in [auto_response_cp, auto_delivery_cp, config_loader_cp, templates_cp, plugins_cp,
                            file_uploader, authorized_users_cp, proxy_cp, default_cp]:
                 self.add_handlers_from_plugin(module)
-
+    
         self.run_handlers(self.pre_init_handlers, (self,))
-
+    
         if self.MAIN_CFG["Telegram"].getboolean("enabled"):
             self.telegram.setup_commands()
             try:
@@ -665,16 +667,16 @@ class Cardinal(object):
             except:
                 logger.warning("Произошла ошибка при изменении бота Telegram.")
                 logger.debug("TRACEBACK", exc_info=True)
-
-            Thread(target=self.telegram.run, daemon=True).start()
-
+    
+            self._create_thread(self.telegram.run, name="TelegramBot")
+    
         self.__init_account()
         self.runner = FunPayAPI.Runner(self.account, self.old_mode_enabled)
         self.__update_profile()
         self.run_handlers(self.post_init_handlers, (self,))
         return self
 
-    def run(self):
+        def run(self):
         """
         Запускает кардинал после инициализации. Используется для первого старта.
         """
@@ -682,10 +684,19 @@ class Cardinal(object):
         self.start_time = int(time.time())
         self.run_handlers(self.pre_start_handlers, (self,))
         self.run_handlers(self.post_start_handlers, (self,))
-
-        Thread(target=self.lots_raise_loop, daemon=True).start()
-        Thread(target=self.update_session_loop, daemon=True).start()
+    
+        self._create_thread(self.lots_raise_loop, name="LotsRaiseLoop")
+        self._create_thread(self.update_session_loop, name="UpdateSessionLoop")
+        
+        # Запускаем обработку событий в основном потоке
         self.process_events()
+
+    def _create_thread(self, target, name=None):
+        """Создает поток безопасно"""
+        thread = Thread(target=target, name=name, daemon=True)
+        self._threads.append(thread)
+        thread.start()
+        return thread
 
     def start(self):
         """
@@ -698,11 +709,22 @@ class Cardinal(object):
 
     def stop(self):
         """
-        Останавливает кардинал. Не используется.
+        Останавливает кардинал.
         """
         self.run_id += 1
         self.run_handlers(self.pre_stop_handlers, (self,))
+        self.stop_all_threads()
         self.run_handlers(self.post_stop_handlers, (self,))
+
+    def stop_all_threads(self):
+        """Останавливает все фоновые потоки"""
+        self._stop_event.set()
+        # Ждем завершения потоков
+        for thread in self._threads:
+            if thread.is_alive():
+                thread.join(timeout=5)
+        self._threads.clear()
+        self._stop_event.clear()
 
     def update_lots_and_categories(self):
         """
